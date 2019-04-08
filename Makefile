@@ -75,7 +75,7 @@ ifeq ($(TEMPLATE_ONLY), 1)
 endif
 
 COMPONENTS_NO_BUILDER := $(filter-out builder,$(COMPONENTS))
-COMPONENTS_NO_TPL_BUILDER := $(filter-out linux-template-builder builder,$(COMPONENTS))
+COMPONENTS_NO_TPL_BUILDER := $(filter-out vanir-linux-template-builder builder,$(COMPONENTS))
 
 # The package manager used to install dependencies. builder.conf
 # files may depend on this variable to determine the correct
@@ -248,7 +248,7 @@ endif
 .PHONY: $(COMPONENTS:%=sign.vm.%)
 $(COMPONENTS_NO_TPL_BUILDER:%=sign.vm.%): sign.vm.% : $(addsuffix .%, $(DISTS_VM_NO_FLAVOR:%=sign.vm.%))
 # don't strip flavors for template signing
-sign.vm.linux-template-builder : $(addsuffix .linux-template-builder, $(DISTS_VM:%=sign.vm.%))
+sign.vm.vanir-linux-template-builder : $(addsuffix .vanir-linux-template-builder, $(DISTS_VM:%=sign.vm.%))
 
 sign.%: PACKAGE_SET = $(word 1, $(subst ., ,$*))
 sign.%: DIST        = $(word 2, $(subst ., ,$*))
@@ -260,9 +260,9 @@ sign.%:
 	@SIGN_KEY=$(SIGN_KEY); \
 	sign_key_var="SIGN_KEY_$${DIST%%+*}"; \
 	[ -n "$${!sign_key_var}" ] && SIGN_KEY="$${!sign_key_var}"; \
-	if [ "$(COMPONENT)" = linux-template-builder ]; then
+	if [ "$(COMPONENT)" = vanir-linux-template-builder ]; then
 		export TEMPLATE_NAME=$$(MAKEFLAGS= make -s \
-				-C $(SRC_DIR)/linux-template-builder \
+				-C $(SRC_DIR)/vanir-linux-template-builder \
 				DIST=$(DIST) \
 				template-name)
 	fi
@@ -302,7 +302,7 @@ yum-dom0 yum-vm:
 
 # Some components requires custom rules
 
-linux-template-builder:: template
+vanir-linux-template-builder:: template
 
 template:: $(DISTS_VM:%=template-local-%)
 
@@ -328,16 +328,16 @@ template-local-%::
 	export GNUPGHOME="$(BUILDER_DIR)/keyrings/template-$$DIST"; \
 	mkdir -m 700 -p "$$GNUPGHOME"; \
 	export DIST NO_SIGN TEMPLATE_FLAVOR TEMPLATE_OPTIONS; \
-	$(MAKE) -s -C $(SRC_DIR)/linux-template-builder prepare-repo-template || exit 1; \
+	$(MAKE) -s -C $(SRC_DIR)/vanir-linux-template-builder prepare-repo-template || exit 1; \
 	for repo in $(GIT_REPOS); do \
-		if [ "$$repo" = "$(SRC_DIR)/linux-template-builder" ]; then \
+		if [ "$$repo" = "$(SRC_DIR)/vanir-linux-template-builder" ]; then \
 			continue; \
 		fi; \
 		if [ -r $$repo/Makefile.builder ]; then \
 			$(MAKE) --no-print-directory -f Makefile.generic \
 				PACKAGE_SET=vm \
 				COMPONENT=`basename $$repo` \
-				UPDATE_REPO=$(BUILDER_DIR)/$(SRC_DIR)/linux-template-builder/pkgs-for-template/$$DIST \
+				UPDATE_REPO=$(BUILDER_DIR)/$(SRC_DIR)/vanir-linux-template-builder/pkgs-for-template/$$DIST \
 				update-repo || exit 1; \
 		elif $(MAKE) -C $$repo -n update-repo-template > /dev/null 2> /dev/null; then \
 			$(MAKE) -s -C $$repo update-repo-template || exit 1; \
@@ -345,10 +345,10 @@ template-local-%::
 	done; \
 	if [ "$(VERBOSE)" -eq 0 ]; then \
 		echo "-> Building template $$DIST (logfile: build-logs/template-$$DIST.log)..."; \
-		$(MAKE) -s -C $(SRC_DIR)/linux-template-builder $$MAKE_TARGET > build-logs/template-$$DIST.log 2>&1 || exit 1; \
+		$(MAKE) -s -C $(SRC_DIR)/vanir-linux-template-builder $$MAKE_TARGET > build-logs/template-$$DIST.log 2>&1 || exit 1; \
 		echo "--> Done."; \
 	else \
-		$(MAKE) -s -C $(SRC_DIR)/linux-template-builder $$MAKE_TARGET || exit 1; \
+		$(MAKE) -s -C $(SRC_DIR)/vanir-linux-template-builder $$MAKE_TARGET || exit 1; \
 	fi
 
 template-github: template-github.token $(DISTS_VM:%=template-github-%)
@@ -418,14 +418,14 @@ clean-rpms:: clean-installer-rpms
 	@sudo rm -f $(SRC_DIR)/*/pkgs/*/*/*.rpm || true
 
 clean-makefiles = $(filter-out ./Makefile,$(wildcard $(GIT_REPOS:%=%/Makefile)))
-clean-tgt = $(filter-out linux-template-builder.clean,$(clean-makefiles:$(SRC_DIR)/%/Makefile=%.clean))
-clean-builder-tgt = $(DISTS_VM_NO_FLAVOR:%=linux-template-builder.clean.%)
+clean-tgt = $(filter-out vanir-linux-template-builder.clean,$(clean-makefiles:$(SRC_DIR)/%/Makefile=%.clean))
+clean-builder-tgt = $(DISTS_VM_NO_FLAVOR:%=vanir-linux-template-builder.clean.%)
 .PHONY: clean $(clean-tgt) $(clean-builder-tgt)
 $(clean-tgt):
 	@-$(MAKE) -s -i -k -C $(SRC_DIR)/$(@:%.clean=% clean)
 $(clean-builder-tgt):
-	if [ -d $(SRC_DIR)/linux-template-builder ]; then
-		@-DIST=$(subst .,,$(suffix $@)) $(MAKE) -s -i -k -C $(SRC_DIR)/linux-template-builder clean
+	if [ -d $(SRC_DIR)/vanir-linux-template-builder ]; then
+		@-DIST=$(subst .,,$(suffix $@)) $(MAKE) -s -i -k -C $(SRC_DIR)/vanir-linux-template-builder clean
 	fi
 clean:: $(clean-tgt) $(clean-builder-tgt);
 
@@ -453,7 +453,7 @@ distclean: clean-all
 # Does a regular clean as well as removes all prepared and created template
 # images as well as chroot-* while leaving source repos in vanir-src
 .PHONY: mostlyclean
-mostlyclean:: _linux_template_builder := $(BUILDER_DIR)/$(SRC_DIR)/linux-template-builder
+mostlyclean:: _linux_template_builder := $(BUILDER_DIR)/$(SRC_DIR)/vanir-vanir-linux-template-builder
 mostlyclean:: clean-chroot clean-rpms clean
 	if [ -d "$(_linux_template_builder)" ] ; then \
 	    pushd "$(_linux_template_builder)"; \
@@ -496,24 +496,24 @@ iso.copy-template-rpms: $(DISTS_VM:%=iso.copy-template-rpms.%)
 
 iso.copy-template-rpms.%: DIST=$*
 
-iso.copy-template-rpms.%: $(SRC_DIR)/linux-template-builder/Makefile.builder
+iso.copy-template-rpms.%: $(SRC_DIR)/vanir-vanir-linux-template-builder/Makefile.builder
 	@echo "--> Copying template $(DIST) RPM..."
 	@export TEMPLATE_NAME=$$(MAKEFLAGS= make -s \
-			-C $(SRC_DIR)/linux-template-builder \
+			-C $(SRC_DIR)/vanir-linux-template-builder \
 			DIST=$(DIST) \
 			template-name); \
 	$(MAKE) --no-print-directory -f Makefile.generic \
 		PACKAGE_SET=vm \
 		DIST=$(DIST) \
-		COMPONENT=linux-template-builder \
+		COMPONENT=vanir-linux-template-builder \
 		USE_DIST_BUILD_TOOLS=0 \
 		UPDATE_REPO=$(BUILDER_DIR)/$(SRC_DIR)/$(INSTALLER_COMPONENT)/yum/vanir-dom0 \
 		update-repo
 
-iso.copy-template-rpms.%: $(SRC_DIR)/linux-template-builder/Makefile
+iso.copy-template-rpms.%: $(SRC_DIR)/vanir-linux-template-builder/Makefile
 	@echo "--> Copying template $(DIST) RPM..."
 	@if ! DIST=$(DIST) UPDATE_REPO=$(BUILDER_DIR)/$(SRC_DIR)/$(INSTALLER_COMPONENT)/yum/vanir-dom0 \
-		DIST=$(DIST) $(MAKE) -s -C $(SRC_DIR)/linux-template-builder update-repo-installer ; then \
+		DIST=$(DIST) $(MAKE) -s -C $(SRC_DIR)/vanir-linux-template-builder update-repo-installer ; then \
 			echo "make update-repo-installer failed for template dist=$$DIST"; \
 			exit 1; \
 	fi
@@ -522,7 +522,7 @@ iso: iso.clean-repos iso.copy-rpms iso.copy-template-rpms
 	@if [ "$(LINUX_INSTALLER_MULTIPLE_KERNELS)" == "yes" ]; then \
 		ln -f $(SRC_DIR)/linux-kernel*/pkgs/fc*/x86_64/*.rpm $(SRC_DIR)/$(INSTALLER_COMPONENT)/yum/vanir-dom0/rpm/; \
 	fi
-	@MAKE_TARGET="iso QUBES_RELEASE=$(QUBES_RELEASE)" ./scripts/build $(DIST_DOM0) $(INSTALLER_COMPONENT) root || exit 1
+	@MAKE_TARGET="iso VANIR_RELEASE=$(VANIR_RELEASE)" ./scripts/build $(DIST_DOM0) $(INSTALLER_COMPONENT) root || exit 1
 	@ln -f $(SRC_DIR)/$(INSTALLER_COMPONENT)/build/ISO/vanir-x86_64/iso/*.iso iso/ || exit 1
 	@echo "The ISO can be found in iso/ subdirectory."
 	@echo "Thank you for building vanir. Have a nice day!"
@@ -762,7 +762,7 @@ endif
 
 # similar for templates, but set PACKAGE_SET to "dom0" and use full DISTS_VM
 # instead of DISTS_VM_NO_FLAVOR
-update-repo-templates-%: $(addprefix internal-update-repo-templates-%.vm.,$(DISTS_VM:%=%.linux-template-builder)) post-update-repo-templates-%
+update-repo-templates-%: $(addprefix internal-update-repo-templates-%.vm.,$(DISTS_VM:%=%.vanir-linux-template-builder)) post-update-repo-templates-%
 	@true
 
 
@@ -799,7 +799,7 @@ internal-update-repo-templates-%: UPDATE_REPO_SUBDIR = $(TARGET_REPO)
 # this is executed for every (DIST,PACKAGE_SET,COMPONENT) combination
 internal-update-repo-%:
 	@repo_base_var="LINUX_REPO_$(DIST)_BASEDIR"; \
-	if [ "$(COMPONENT)" = linux-template-builder ]; then \
+	if [ "$(COMPONENT)" = vanir-linux-template-builder ]; then \
 		# templates belongs to dom0 repository, even though PACKAGE_SET=vm
 		repo_base_var="LINUX_REPO_$(DIST_DOM0)_BASEDIR"; \
 	fi; \
@@ -817,9 +817,9 @@ internal-update-repo-%:
 				exit 0; \
 			fi; \
 		fi; \
-		if [ "$(COMPONENT)" = linux-template-builder ]; then
+		if [ "$(COMPONENT)" = vanir-linux-template-builder ]; then
 			export TEMPLATE_NAME=$$(MAKEFLAGS= make -s \
-					-C $(SRC_DIR)/linux-template-builder \
+					-C $(SRC_DIR)/vanir-linux-template-builder \
 					DIST=$(DIST) \
 					template-name)
 		fi
@@ -877,13 +877,13 @@ post-update-repo-%:
 template-name:
 	@for DIST in $(DISTS_VM); do \
 		export DIST; \
-		$(MAKE) -s -C $(SRC_DIR)/linux-template-builder template-name; \
+		$(MAKE) -s -C $(SRC_DIR)/vanir-linux-template-builder template-name; \
 	done
 
 check-release-status: $(DISTS_VM_NO_FLAVOR:%=check-release-status-vm-%)
 
 ifneq (,$(DIST_DOM0))
-check-release-status: check-release-status-dom0-$(DIST_DOM0) $(if $(wildcard $(SRC_DIR)/linux-template-builder/rpm/noarch/*.rpm),check-release-status-templates)
+check-release-status: check-release-status-dom0-$(DIST_DOM0) $(if $(wildcard $(SRC_DIR)/vanir-linux-template-builder/rpm/noarch/*.rpm),check-release-status-templates)
 	@true
 endif
 
@@ -895,7 +895,7 @@ check-release-status-templates:
 		echo "-> Checking $(c.bold)templates$(c.normal)"
 	fi
 	for DIST in $(DISTS_VM); do \
-		if ! [ -e $(SRC_DIR)/linux-template-builder/Makefile.builder ]; then \
+		if ! [ -e $(SRC_DIR)/vanir-linux-template-builder/Makefile.builder ]; then \
 			# Old style components not supported
 			continue; \
 		fi; \
@@ -906,7 +906,7 @@ check-release-status-templates:
 			echo -n "$$TEMPLATE_NAME: "; \
 		fi; \
 		$(BUILDER_DIR)/scripts/check-release-status-for-component --color \
-			"linux-template-builder" "vm" "$$DIST"; \
+			"vanir-linux-template-builder" "vm" "$$DIST"; \
 		if [ "0$(HTML_FORMAT)" -eq 1 ]; then \
 			printf '</tr>\n'; \
 		fi; \
