@@ -47,7 +47,7 @@ OVERRIDE_DATA = 'override.data'
 MASTER_TEMPLATE = 'templates.conf'
 BUILDER_CONF = 'builder.conf'
 BACKUP_EXTENSION = '.bak'
-QUBES_DEVELOPERS_KEYS = 'vanir-developers-keys.asc'
+VANIR_DEVELOPERS_KEYS = 'vanir-developers-keys.asc'
 GNUPGHOME = os.path.join(os.path.abspath(BASE_DIR), 'keyrings/git')
 
 # Add 'vanir-builder/libs' directory to sys.path
