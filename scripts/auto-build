@@ -1,0 +1,146 @@
+#!/bin/bash
+
+# This is script to automate build process in reaction to pushing updates
+# sources to git. The workflow is:
+# - fetch sources, check if properly signed
+# - check if version tag is on top
+# - fast-forward local repository
+# - build package(s) according to builder.conf
+# - upload to current-testing repository
+#
+# All the above should be properly logged
+
+. $(dirname $0)/auto-build-functions.sh
+
+usage() {
+    echo "Usage: $0 component-name" >&2
+}
+
+if [ -z "$1" ]; then
+    usage
+    exit 1
+fi
+
+set -e
+
+cd $(dirname $0)/..
+
+# Sanity checks
+if [ "${1##*/}" != "${1}" ]; then
+    echo "Found '/' in argument" >&2
+    exit 1
+fi
+
+found=
+for c in $(make -s get-var GET_VAR=COMPONENTS); do
+    if [ "$c" = "$1" ]; then
+        found=1
+    fi
+done
+if [ -z "$found" ]; then
+    echo "No such component: $1" >&2
+    exit 1
+fi
+
+component=$1
+export COMPONENTS=$component
+
+# first update the builder itself
+make GIT_MERGE_OPTS=--ff-only COMPONENTS='builder $(BUILDER_PLUGINS)' \
+                    prepare-merge-fetch \
+                    do-merge \
+                    get-sources-extra
+
+if [ ! -d "qubes-src/$component" ]; then
+    # new component, download fresh sources
+    make get-sources
+else
+    # fetch new changes only, and only on new version (to not break pending
+    # promotion current-testing->current)
+    make GIT_MERGE_OPTS=--ff-only \
+                        prepare-merge-fetch \
+                        do-merge-versions-only \
+                        get-sources-extra
+fi
+
+# for template builder only refresh sources, but build only on explicit request
+if [ "$component" = "linux-template-builder" ]; then
+    echo "Template build requires explicit request" >&2
+    exit 0
+fi
+
+git_url=$(make -s get-var GET_VAR=GIT_URL_${component//-/_})
+if [ -z "$git_url" ]; then
+    git_baseurl=$(make -s get-var GET_VAR=GIT_BASEURL)
+    git_prefix=$(make -s get-var GET_VAR=GIT_PREFIX)
+    # skip .git suffix, if any
+    git_url="${git_baseurl}/${git_prefix}${component}"
+fi
+
+dists_vm=$(make -s get-var GET_VAR=DISTS_VM_NO_FLAVOR)
+dist_dom0=$(make -s get-var GET_VAR=DIST_DOM0)
+built_for_dom0=
+built_for_vm=
+build_logs=
+if [ -n "$dist_dom0" ]; then
+    release_status=$(scripts/check-release-status-for-component \
+            --abort-no-version \
+            --abort-on-empty \
+            --no-print-version \
+            $component dom0 $dist_dom0 || :)
+    if [ "$release_status" == "not released" ]; then
+        rm -f "$log_service_output_file"
+        if scripts/make-with-log \
+                DISTS_VM= DIST_DOM0=$dist_dom0 qubes; then
+            built_for_dom0=$dist_dom0
+            build_logs="$build_logs ${component}-dom0-${dist_dom0}=$(get_build_log_url)"
+        else
+            # report failure but still upload other packages
+            build_failure $component dom0 $dist_dom0 "$(get_build_log_url)"
+            build_logs="$build_logs ${component}-dom0-${dist_dom0}=$(get_build_log_url)"
+        fi
+    fi
+fi
+
+if [ -n "$dists_vm" ]; then
+    for dist_vm in $dists_vm; do
+        release_status=$(scripts/check-release-status-for-component \
+                --abort-no-version \
+                --abort-on-empty \
+                --no-print-version \
+                $component vm $dist_vm || :)
+        if [ "$release_status" == "not released" ]; then
+            rm -f "$log_service_output_file"
+            if scripts/make-with-log \
+                    DISTS_VM=$dist_vm DIST_DOM0= qubes; then
+                built_for_vm="$built_for_vm $dist_vm"
+                build_logs="$build_logs ${component}-vm-${dist_vm}=$(get_build_log_url)"
+            else
+                # report failure but still upload other packages
+                build_failure $component vm $dist_vm "$(get_build_log_url)"
+                build_logs="$build_logs ${component}-vm-${dist_vm}=$(get_build_log_url)"
+            fi
+        fi
+    done
+fi
+
+# cleanup
+rm -f "$log_service_output_file"
+
+if [ -z "$built_for_dom0" -a -z "$built_for_vm" ]; then
+    # nothing was built, something gone wrong
+    exit 1
+fi
+
+# sending a log should allow accessing signing keys
+# if signing itself (or upload) fails log the failure as build failure too
+if ! scripts/make-with-log \
+        DISTS_VM="$built_for_vm" \
+        DIST_DOM0="$built_for_dom0" \
+        BUILD_LOGS_URL="$build_logs" \
+        GIT_URL_${component//-/_}="$git_url" \
+        sign-all update-repo-current-testing; then
+    build_failure $component upload \
+        "dom0:$built_for_dom0 vm:$built_for_vm" "$(get_build_log_url)"
+    exit 1
+fi

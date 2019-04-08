@@ -1,0 +1,151 @@
+#!/bin/sh
+
+set -e
+set -x
+
+repo_name="$(basename $PWD)"
+repo_dir="$PWD"
+
+# drop vanir- prefix
+repo_name=${repo_name#vanir-}
+
+if [ -n "$1" ]; then
+    # Build this component(s) instead, but still use what Travis-CI downloaded
+    override_components="$1"
+fi
+
+# go to builder main directory
+cd "$(dirname $0)/.."
+
+keep_alive() {
+    while sleep 300; do
+       echo "*** STILL ALIVE ***"
+    done
+}
+
+# place cachedir outside vanir-builder (to not restore vanir-builder itself
+# from Travis-CI cache)
+mv cache $HOME/vanir-builder-cache
+ln -s $HOME/vanir-builder-cache cache
+
+# use specific builder conf for Travis-CI builds
+export BUILDERCONF=scripts/travis-builder.conf
+
+if [ -z "$DISTS_VM" -a -z "$DIST_DOM0" ]; then
+    echo "Specify either DISTS_VM or DIST_DOM0 in .travis.yml" >&2
+    exit 1
+fi
+
+#if [ -z "$USE_QUBES_REPO_VERSION" ]; then
+#    echo "Specify target Qubes version with USE_QUBES_REPO_VERSION in .travis.yml" >&2
+#    exit 1
+#fi
+
+# We don't need MongoDB, so don't care it their key is expired or not
+sudo rm -f /etc/apt/sources.list.d/mongodb*
+
+sudo apt-get -qq update
+
+# install required packages
+make install-deps
+
+sudo apt-get -y install dpkg-dev debootstrap
+
+if ! getent group mock >/dev/null; then
+    # mock require group with this specific name
+    sudo groupadd mock
+fi
+
+if [ ! -e /usr/share/debootstrap/scripts/stretch ]; then
+    # workaround for old debootstrap in Trusty
+    sudo ln -s sid /usr/share/debootstrap/scripts/stretch
+fi
+
+if [ -L /dev/shm ]; then
+    # don't use symlink for /dev/shm, as it will break when bind-mounting /dev
+    # into chroot (archlinux)
+    sudo rm -f /dev/shm
+    sudo mkdir /dev/shm
+    sudo mount -t tmpfs shm /dev/shm
+fi
+
+# and old sfdisk (missing gpt support), get it from xenial
+if [ "0$TEMPLATE_ROOT_WITH_PARTITIONS" -eq 1 ] || [ "$DISTS_VM" = "archlinux" ]; then
+    cd cache
+    wget http://archive.ubuntu.com/ubuntu/pool/main/u/util-linux/libsmartcols1_2.27.1-6ubuntu3_amd64.deb
+    wget http://archive.ubuntu.com/ubuntu/pool/main/u/util-linux/libfdisk1_2.27.1-6ubuntu3_amd64.deb
+    wget http://archive.ubuntu.com/ubuntu/pool/main/u/util-linux/util-linux_2.27.1-6ubuntu3_amd64.deb
+    wget http://archive.ubuntu.com/ubuntu/pool/main/u/util-linux/libmount1_2.27.1-6ubuntu3_amd64.deb
+    wget http://archive.ubuntu.com/ubuntu/pool/main/u/util-linux/mount_2.27.1-6ubuntu3_amd64.deb
+    sha256sum -c <<EOF
+044ae71864ecd0ec1ae05029d9a202f988c0cc97fde007fbfa7eff0d8a5fff0b  libfdisk1_2.27.1-6ubuntu3_amd64.deb
+ed5ce19a42bdcce6ff21d6fe1bf21351690c3d2c32d59233130cb80598889468  libmount1_2.27.1-6ubuntu3_amd64.deb
+fb4dd8b8fa63b81a493655e3f32b99d4cd385acee28a9778cab1e5b5a6b1a417  libsmartcols1_2.27.1-6ubuntu3_amd64.deb
+47a5b5fd88efbd7a4f7a38edbfc25ddee3ad1f5ead8ee8a6d19984fb47dd5943  mount_2.27.1-6ubuntu3_amd64.deb
+209bbcbddfc6ef4ebe3f9ffc9af8366b4309d950248c4a274d0914e440139ed2  util-linux_2.27.1-6ubuntu3_amd64.deb
+EOF
+    sudo dpkg -i lib*_*deb 
+    sudo dpkg -i mount_*deb
+    dpkg-deb -x util-linux_*deb util-linux
+    sudo cp -f util-linux/sbin/sfdisk /sbin/sfdisk
+    sudo cp -f util-linux/usr/bin/unshare /usr/bin/unshare
+    cd ..
+fi
+
+# another case when trusty used in Travis-CI is too old, rejecting control.tar.xz
+if echo "$DISTS_VM$DIST_DOM0" | grep -qv "^fc"; then
+    cd cache
+    wget http://archive.ubuntu.com/ubuntu/pool/main/d/dpkg/dpkg_1.18.4ubuntu1_amd64.deb
+    sha256sum -c <<EOF
+6d066d4b86cbb330466b5e73633a2fcc48624cc5d1945c5746863b5a35bb6171  dpkg_1.18.4ubuntu1_amd64.deb
+EOF
+    dpkg-deb -x dpkg_1.18.4ubuntu1_amd64.deb dpkg
+    sudo cp -f dpkg/usr/bin/dpkg-deb /usr/bin/dpkg-deb
+    cd ..
+fi
+
+# we need this commit to use pbuilder with stretch+
+# https://salsa.debian.org/pbuilder-team/pbuilder/commit/de914ad814fe51179ef35993c5336b9355e84ccf
+if echo "$DISTS_VM$DIST_DOM0" | grep -qv '^fc'; then
+    cd cache
+    wget http://archive.ubuntu.com/ubuntu/pool/main/p/pbuilder/pbuilder_0.229.1_all.deb
+    sha256sum -c <<EOF
+314ef4af137903dfb13e8c3ef1e6ea56cfdb23808d52ec4f5f50e288c73610c5  pbuilder_0.229.1_all.deb
+EOF
+    sudo dpkg -i pbuilder_0.229.1_all.deb
+    cd ..
+fi
+
+# download builder plugins
+make get-sources COMPONENTS='$(BUILDER_PLUGINS)'
+
+if [ -n "$override_components" ]; then
+    make COMPONENTS="$override_components" get-sources
+fi
+
+# place Travis-CI downloaded sources in vanir-src
+if [ -d vanir-src/${repo_name} ]; then
+    rm -rf vanir-src/${repo_name}
+fi
+cp -al $repo_dir vanir-src/$repo_name
+
+# install extra packages - after downloading builder plugins and other sources
+make install-deps
+
+if [ "0$VERBOSE" -eq 0 ]; then
+    # if not showing build log, echo some text to prevent Travis-CI timeout
+    keep_alive &
+    keep_alive_pid=$!
+fi
+
+# download additional sources if needed and compile
+if [ -n "$override_components" ]; then
+    make COMPONENTS="$override_components" get-sources-extra vanir
+else
+    make COMPONENTS=$repo_name get-sources-extra vanir
+fi
+
+if [ -n "$keep_alive_pid" ]; then
+    kill -9 $keep_alive_pid
+fi
+find vanir-packages-mirror-repo -type f -ls -exec sha1sum {} +
